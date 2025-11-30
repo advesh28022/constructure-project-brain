@@ -1,0 +1,8 @@
+backend/.venv/
+**/__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/.next/
+backend/chroma_store/
+.DS_Store
+Thumbs.db
