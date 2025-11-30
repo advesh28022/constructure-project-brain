@@ -28,7 +28,7 @@ npm run dev
 
 Set environment variable:
 
-- `NEXT_PUBLIC_API_BASE_URL` – URL of the FastAPI backend.
+- `https://constructure-project-brain.onrender.com` – URL of the FastAPI backend.
 
 ## Features
 
