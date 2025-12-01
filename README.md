@@ -39,5 +39,5 @@ Set environment variable:
 
 Deployment URLs (to be filled ):
 
-- Frontend (Vercel): `https://...`
-- Backend (Render): `https://...`
+- Frontend (Vercel): `https://constructure-project-brain.vercel.app/`
+- Backend (Render): `https://constructure-project-brain.onrender.com`
