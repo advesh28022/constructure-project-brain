@@ -1,208 +1,195 @@
 import os
 import json
-from typing import List, Dict, Tuple
+from typing import List, Tuple, Dict, Any
 
-from pypdf import PdfReader
 import requests
+from pypdf import PdfReader
 
-# ----- Simple in-memory index (no vector DB) -----
+# ------------------------------
+# Simple in-memory index
+# ------------------------------
 
-# Each entry: {"file_name": ..., "page": int, "text": str}
-_INDEX: List[Dict] = []
+IndexItem = Dict[str, Any]
 
+INDEX_PATH = "data/index.json"
+DATA_DIR = "data"
 
-def build_index():
-    """
-    Load all PDFs in ./data into a simple list of pages
-    we can scan with keyword matching.
-    """
-    global _INDEX
-    _INDEX = []
+def build_index() -> None:
+    os.makedirs(os.path.dirname(INDEX_PATH), exist_ok=True)
+    items: List[IndexItem] = []
 
-    data_dir = "data"
-    if not os.path.isdir(data_dir):
-        print("No data directory found")
-        return _INDEX
-
-    for fname in os.listdir(data_dir):
+    for fname in os.listdir(DATA_DIR):
         if not fname.lower().endswith(".pdf"):
             continue
-        path = os.path.join(data_dir, fname)
+        path = os.path.join(DATA_DIR, fname)
         reader = PdfReader(path)
-        for page_num, page in enumerate(reader.pages):
+        for i, page in enumerate(reader.pages):
             text = page.extract_text() or ""
-            text = text.strip()
-            if not text:
-                continue
-            _INDEX.append(
+            items.append(
                 {
                     "file_name": fname,
-                    "page": page_num + 1,
+                    "page": i + 1,
                     "text": text,
                 }
             )
 
-    print(f"Indexed {len(_INDEX)} pages from PDFs in {data_dir}")
-    return _INDEX
+    with open(INDEX_PATH, "w", encoding="utf-8") as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
 
 
-def ensure_index():
-    if not _INDEX:
-        build_index()
+def load_index() -> List[IndexItem]:
+    with open(INDEX_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-def retrieve(query: str, k: int = 5) -> List[Tuple[str, Dict]]:
-    """
-    Very simple keyword retrieval:
-    - Score each page by how many query words it contains.
-    - Return top-k pages.
-    """
-    ensure_index()
-    if not _INDEX:
-        return []
+# ------------------------------
+# Retrieval
+# ------------------------------
 
-    words = [w.lower() for w in query.split() if len(w) > 2]
-    scores: List[Tuple[int, Dict]] = []
+def retrieve(query: str, k: int = 5) -> List[IndexItem]:
+    """Very simple keyword-based retrieval over page texts."""
+    index = load_index()
+    q_tokens = set(query.lower().split())
 
-    for entry in _INDEX:
-        text_lower = entry["text"].lower()
-        score = sum(text_lower.count(w) for w in words)
-        if score > 0:
-            scores.append((score, entry))
+    def score(item: IndexItem) -> int:
+        text_tokens = set(item["text"].lower().split())
+        return len(q_tokens & text_tokens)
 
-    scores.sort(key=lambda x: x[0], reverse=True)
-    top = scores[:k]
-
-    results: List[Tuple[str, Dict]] = []
-    for score, entry in top:
-        snippet = entry["text"][:2000]
-        meta = {"file_name": entry["file_name"], "page": entry["page"]}
-        results.append((snippet, meta))
-
-    return results
+    scored = sorted(index, key=score, reverse=True)
+    return [it for it in scored[:k] if score(it) > 0]
 
 
-def answer_with_rag(question: str):
-    """RAG-like answer using keyword retrieval + Ollama."""
-    contexts = retrieve(question)
-    context_text = ""
-    source_meta = []
-    for i, (doc, meta) in enumerate(contexts):
-        context_text += f"[{i}] (file={meta['file_name']}, page={meta['page']})\n{doc}\n\n"
-        source_meta.append(meta)
+def build_context(chunks: List[IndexItem]) -> str:
+    parts = []
+    for c in chunks:
+        parts.append(
+            f"File: {c['file_name']} | Page: {c['page']}\n{c['text']}\n---"
+        )
+    return "\n\n".join(parts)
 
-    if not context_text:
-        prompt = f"You have no context. The user asked: {question}. Say you are not sure."
-    else:
-        prompt = f"""
-You are a construction project assistant.
-Use ONLY the context below from project documents.
-If you are not sure, say you are not sure and do not invent details.
+
+# ------------------------------
+# LLM abstraction: Groq or Ollama
+# ------------------------------
+
+USE_GROQ = os.getenv("USE_GROQ", "false").lower() == "true"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+
+def call_llm(prompt: str) -> str:
+    if USE_GROQ:
+        # Groq cloud LLM (OpenAI-compatible chat API)
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            json={
+                "model": "llama-3.1-70b-versatile",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a helpful construction project assistant. "
+                        "Always answer using only the provided context. "
+                        "If the answer is not in the context, say you don't know.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.1,
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
+    # Local Ollama (dev only)
+    resp = requests.post(
+        "http://localhost:11434/api/generate",
+        json={"model": "llama3.1", "prompt": prompt, "stream": False},
+        timeout=120,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data.get("response", "")
+
+
+# ------------------------------
+# Q&A RAG
+# ------------------------------
+
+def answer_with_rag(question: str) -> Tuple[str, List[Dict[str, Any]]]:
+    chunks = retrieve(question, k=5)
+    context = build_context(chunks)
+
+    prompt = f"""
+You are answering questions about a construction project based only on the context below.
 
 Context:
-{context_text}
+{context}
 
 Question: {question}
 
-Answer in 3-5 sentences. Explicitly mention which file and page you used.
+Answer concisely in 3-5 sentences. If the answer is not clearly supported by the context, say you are not sure.
 """
 
-    resp = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": "llama3",
-            "prompt": prompt,
-            "stream": False,
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    answer = data.get("response", "")
+    llm_output = call_llm(prompt)
 
-    return answer, source_meta
+    sources = [
+        {"file_name": c["file_name"], "page": c["page"]}
+        for c in chunks
+    ]
+    return llm_output.strip(), sources
 
 
-# ----- Mode routing & simple extraction stubs -----
+# ------------------------------
+# Structured door schedule
+# ------------------------------
 
-def detect_mode(user_message: str) -> str:
-    msg = user_message.lower()
-    if "door schedule" in msg:
-        return "door_schedule"
-    return "qa"
+def generate_door_schedule() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    query = "doors door schedule opening schedule fire rating leaf frame"
+    chunks = retrieve(query, k=8)
+    context = build_context(chunks)
 
-
-def extract_door_schedule(question: str):
-    """
-    Use retrieval to get door-related pages, then ask Ollama to output
-    a JSON door schedule.
-    """
-    # 1) Retrieve relevant context
-    contexts = retrieve("door schedule door openings doors")
-    context_text = ""
-    sources = []
-    for i, (doc, meta) in enumerate(contexts):
-        context_text += f"[{i}] (file={meta['file_name']}, page={meta['page']})\n{doc}\n\n"
-        sources.append(meta)
-
-    # 2) Define schema for doors
-    schema_description = """
-Return a JSON array of door objects. Each object has:
-- mark: string (door mark / ID)
-- location: string (e.g. Level 1 Corridor)
-- width_mm: number or null
-- height_mm: number or null
-- fire_rating: string or null
-- material: string or null
+    schema_hint = """
+Return a JSON array. Each item must be an object with keys:
+- "mark" (string)
+- "location" (string)
+- "width_mm" (number or null)
+- "height_mm" (number or null)
+- "fire_rating" (string or null)
+- "material" (string or null)
 """
 
-    # 3) Build prompt for Ollama
     prompt = f"""
-You are extracting a DOOR SCHEDULE from construction documents.
-
-The user asked: {question}
+You are extracting a door schedule from construction documents.
 
 Context:
-{context_text}
+{context}
 
 Task:
-From the context, extract all doors you can find and return them as JSON only,
-following this schema:
-{schema_description}
+Identify every door mentioned in the context and output a structured door schedule.
 
-Important:
-- If a field is missing, use null.
-- Ensure JSON is valid.
-- Do not add any text before or after the JSON.
+{schema_hint}
+
+Rules:
+- Use millimeters for width_mm and height_mm when possible; otherwise use null.
+- location should be a human-readable location like "Level 1 Corridor".
+- If something is not specified, set the field to null.
+
+Respond with ONLY valid JSON, no commentary.
 """
 
-    # 4) Call Ollama
-    resp = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": "llama3",
-            "prompt": prompt,
-            "stream": False,
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    raw = data.get("response", "")
+    llm_output = call_llm(prompt)
 
-    # 5) Parse JSON safely
-    doors = []
+    data: List[Dict[str, Any]] = []
     try:
-        # try to locate first '[' and last ']'
-        start = raw.find("[")
-        end = raw.rfind("]")
-        if start != -1 and end != -1:
-            json_str = raw[start : end + 1]
-            parsed = json.loads(json_str)
-            if isinstance(parsed, list):
-                doors = parsed
+        data = json.loads(llm_output)
+        if not isinstance(data, list):
+            data = []
     except Exception:
-        doors = []
+        data = []
 
-    return doors, sources
-
+    sources = [
+        {"file_name": c["file_name"], "page": c["page"]}
+        for c in chunks
+    ]
+    return data, sources
