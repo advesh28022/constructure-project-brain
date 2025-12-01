@@ -47,7 +47,8 @@ def load_index() -> List[IndexItem]:
 # Retrieval
 # ------------------------------
 
-def retrieve(query: str, k: int = 5) -> List[IndexItem]:
+def retrieve(query: str, k: int = 6) -> List[IndexItem]:
+    """Very simple keyword-based retrieval over page texts."""
     index = load_index()
     q_tokens = set(query.lower().split())
 
@@ -82,14 +83,15 @@ def call_llm(prompt: str) -> str:
     url = "https://api.groq.com/openai/v1/chat/completions"
 
     payload = {
-        # UPDATED MODEL NAME
         "model": "llama-3.3-70b-versatile",
         "messages": [
             {
                 "role": "system",
-                "content": "You are a helpful construction project assistant. "
-                           "Use only the provided context. If the answer is not "
-                           "in the context, say you don't know.",
+                "content": (
+                    "You are a helpful construction project assistant. "
+                    "Always answer using only the provided context. "
+                    "If the answer is not in the context, say you don't know."
+                ),
             },
             {
                 "role": "user",
@@ -111,14 +113,19 @@ def call_llm(prompt: str) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-
 # ------------------------------
 # Q&A RAG
 # ------------------------------
 
 def answer_with_rag(question: str) -> Tuple[str, List[Dict[str, Any]]]:
-    chunks = retrieve(question, k=5)
+    # Use fewer chunks to stay under token limits
+    chunks = retrieve(question, k=6)
     context = build_context(chunks)
+
+    # Hard-limit context length to avoid 413 (token limit)
+    max_chars = 11999
+    if len(context) > max_chars:
+        context = context[:max_chars]
 
     prompt = f"""
 You are answering questions about a construction project based only on the context below.
@@ -146,8 +153,13 @@ Answer concisely in 3-5 sentences. If the answer is not clearly supported by the
 
 def generate_door_schedule() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     query = "doors door schedule opening schedule fire rating leaf frame"
-    chunks = retrieve(query, k=8)
+    # Fewer chunks here as well
+    chunks = retrieve(query, k=6)
     context = build_context(chunks)
+
+    max_chars = 11999
+    if len(context) > max_chars:
+        context = context[:max_chars]
 
     schema_hint = """
 Return a JSON array. Each item must be an object with keys:
