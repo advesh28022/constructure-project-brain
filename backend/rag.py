@@ -14,6 +14,7 @@ IndexItem = Dict[str, Any]
 INDEX_PATH = "data/index.json"
 DATA_DIR = "data"
 
+
 def build_index() -> None:
     os.makedirs(os.path.dirname(INDEX_PATH), exist_ok=True)
     items: List[IndexItem] = []
@@ -69,47 +70,37 @@ def build_context(chunks: List[IndexItem]) -> str:
 
 
 # ------------------------------
-# LLM abstraction: Groq or Ollama
+# LLM via Groq only
 # ------------------------------
 
-USE_GROQ = os.getenv("USE_GROQ", "false").lower() == "true"
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 
 def call_llm(prompt: str) -> str:
-    if USE_GROQ:
-        # Groq cloud LLM (OpenAI-compatible chat API)
-        resp = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-            json={
-                "model": "llama-3.1-70b-versatile",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a helpful construction project assistant. "
-                        "Always answer using only the provided context. "
-                        "If the answer is not in the context, say you don't know.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.1,
-            },
-            timeout=60,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
-
-    # Local Ollama (dev only)
+    """Call Groq's OpenAI-compatible chat API."""
     resp = requests.post(
-        "http://localhost:11434/api/generate",
-        json={"model": "llama3.1", "prompt": prompt, "stream": False},
-        timeout=120,
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        json={
+            "model": "llama-3.1-70b-versatile",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a helpful construction project assistant. "
+                        "Always answer using only the provided context. "
+                        "If the answer is not in the context, say you don't know."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+        },
+        timeout=60,
     )
     resp.raise_for_status()
     data = resp.json()
-    return data.get("response", "")
+    return data["choices"][0]["message"]["content"]
 
 
 # ------------------------------
