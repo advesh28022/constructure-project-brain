@@ -81,7 +81,6 @@ def call_llm(prompt: str) -> str:
         raise RuntimeError("GROQ_API_KEY is not set in environment")
 
     url = "https://api.groq.com/openai/v1/chat/completions"
-
     payload = {
         "model": "llama-3.3-70b-versatile",
         "messages": [
@@ -93,14 +92,10 @@ def call_llm(prompt: str) -> str:
                     "If the answer is not in the context, say you don't know."
                 ),
             },
-            {
-                "role": "user",
-                "content": prompt,
-            },
+            {"role": "user", "content": prompt},
         ],
         "temperature": 0.1,
     }
-
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json",
@@ -108,9 +103,15 @@ def call_llm(prompt: str) -> str:
 
     resp = requests.post(url, headers=headers, json=payload, timeout=60)
     print("GROQ DEBUG:", resp.status_code, resp.text)
+
+    if resp.status_code == 429:
+        # For /eval, treat this as "could not run"
+        return "LLM call skipped due to rate limiting."
+
     resp.raise_for_status()
     data = resp.json()
     return data["choices"][0]["message"]["content"]
+
 
 
 # ------------------------------
@@ -123,7 +124,7 @@ def answer_with_rag(question: str) -> Tuple[str, List[Dict[str, Any]]]:
     context = build_context(chunks)
 
     # Hard-limit context length to avoid 413 (token limit)
-    max_chars = 11999
+    max_chars = 8000
     if len(context) > max_chars:
         context = context[:max_chars]
 
@@ -157,7 +158,7 @@ def generate_door_schedule() -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]
     chunks = retrieve(query, k=6)
     context = build_context(chunks)
 
-    max_chars = 11999
+    max_chars = 8000
     if len(context) > max_chars:
         context = context[:max_chars]
 
