@@ -10,12 +10,7 @@ from eval import evaluate
 
 app = FastAPI()
 
-origins = [
-    "http://localhost:3000",
-    "https://constructure-project-brain.vercel.app",
-    "https://constructure-project-brain-nbvy0bwwx-adveshs-projects-4796d1f6.vercel.app",
-    "https://constructure-project-brain-jiminwg05-adveshs-projects-4796d1f6.vercel.app",
-]
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
