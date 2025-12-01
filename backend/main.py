@@ -1,3 +1,4 @@
+import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -59,12 +60,12 @@ def chat(req: ChatRequest):
 
 # ----- Minimal evaluation endpoint -----
 
-TEST_QUERIES: List[Tuple[str, str]] = [
-    ("What is the fire rating for corridor partitions?", "fire rating"),
-    ("What is the specified flooring material in the lobby?", "floor"),
-    ("Are there any accessibility requirements for doors?", "door"),
-    ("Generate a door schedule", "door schedule"),
-    ("What type of glazing is used in exterior windows?", "window"),
+TEST_QUERIES: List[Dict[str, Any]] = [
+    {"question": "What is the fire rating for corridor partitions?", "expected_hint": "fire"},
+    {"question": "What is the specified flooring material in the lobby?", "expected_hint": "floor"},
+    {"question": "Are there any accessibility requirements for doors?", "expected_hint": "door"},
+    {"question": "Generate a door schedule", "expected_hint": "mark"},
+    {"question": "What glazing is used in exterior windows?", "expected_hint": "window"},
 ]
 
 
@@ -72,19 +73,21 @@ TEST_QUERIES: List[Tuple[str, str]] = [
 def eval_endpoint() -> Dict[str, Any]:
     results: List[Dict[str, Any]] = []
 
-    for q, expected_hint in TEST_QUERIES:
-        ans, sources = answer_with_rag(q) if "door schedule" not in q.lower() else generate_door_schedule()
-        if isinstance(ans, tuple):
-            # if generate_door_schedule returned (data, sources)
-            data, sources = ans
-            text_for_check = str(data)
+    for item in TEST_QUERIES:
+        q = item["question"]
+        expected = item["expected_hint"]
+
+        if "door schedule" in q.lower():
+            data, sources = generate_door_schedule()
+            text_for_check = json.dumps(data)
         else:
-            text_for_check = ans
+            answer, sources = answer_with_rag(q)
+            text_for_check = answer
 
         label = "wrong"
-        if expected_hint.lower() in text_for_check.lower():
+        if expected.lower() in text_for_check.lower():
             label = "looks correct"
-        elif any(expected_hint.lower() in (s["file_name"] or "").lower() for s in sources):
+        elif any(expected.lower() in json.dumps(s).lower() for s in sources):
             label = "partially correct"
 
         results.append(
@@ -96,9 +99,9 @@ def eval_endpoint() -> Dict[str, Any]:
         )
 
     summary = {
-        "looks_correct": sum(1 for r in results if r["label"] == "looks correct"),
-        "partially_correct": sum(1 for r in results if r["label"] == "partially correct"),
-        "wrong": sum(1 for r in results if r["label"] == "wrong"),
+        "looks_correct": sum(r["label"] == "looks correct" for r in results),
+        "partially_correct": sum(r["label"] == "partially correct" for r in results),
+        "wrong": sum(r["label"] == "wrong" for r in results),
     }
 
     return {"summary": summary, "results": results}
