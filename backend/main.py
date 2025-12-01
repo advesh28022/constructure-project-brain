@@ -12,7 +12,8 @@ app = FastAPI()
 
 origins = [
     "http://localhost:3000",
-    # add Vercel URL later
+    "https://constructure-project-brain.vercel.app",
+    "https://constructure-project-brain-nbvy0bwwx-adveshs-projects-4796d1f6.vercel.app",
 ]
 
 app.add_middleware(
