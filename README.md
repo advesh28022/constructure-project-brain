@@ -171,3 +171,9 @@ In production, the same `NEXT_PUBLIC_API_BASE_URL` is pointed to the Render back
 }
 ]
 }
+
+Please note:
+
+Complex tables and scanned drawings are only partially readable with lightweight text extraction.
+
+Retrieval is keyword‑based and page‑level only, so highly specific questions (carpenter rate, exact sheet number) might require more advanced parsing or vision models
