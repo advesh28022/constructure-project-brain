@@ -6,7 +6,7 @@ import requests
 from pypdf import PdfReader
 
 # ------------------------------
-# Simple in-memory index
+# Simple index on disk
 # ------------------------------
 
 IndexItem = Dict[str, Any]
@@ -48,7 +48,6 @@ def load_index() -> List[IndexItem]:
 # ------------------------------
 
 def retrieve(query: str, k: int = 5) -> List[IndexItem]:
-    """Very simple keyword-based retrieval over page texts."""
     index = load_index()
     q_tokens = set(query.lower().split())
 
@@ -70,37 +69,47 @@ def build_context(chunks: List[IndexItem]) -> str:
 
 
 # ------------------------------
-# LLM via Groq only
+# LLM via Groq
 # ------------------------------
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 
 def call_llm(prompt: str) -> str:
-    """Call Groq's OpenAI-compatible chat API."""
-    resp = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-        json={
-            "model": "llama-3.1-70b-versatile",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a helpful construction project assistant. "
-                        "Always answer using only the provided context. "
-                        "If the answer is not in the context, say you don't know."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            "temperature": 0.1,
-        },
-        timeout=60,
-    )
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not set in environment")
+
+    url = "https://api.groq.com/openai/v1/chat/completions"
+
+    payload = {
+        # UPDATED MODEL NAME
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful construction project assistant. "
+                           "Use only the provided context. If the answer is not "
+                           "in the context, say you don't know.",
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": 0.1,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    resp = requests.post(url, headers=headers, json=payload, timeout=60)
+    print("GROQ DEBUG:", resp.status_code, resp.text)
     resp.raise_for_status()
     data = resp.json()
     return data["choices"][0]["message"]["content"]
+
 
 
 # ------------------------------
